@@ -80,20 +80,25 @@ def process_trip_updates(feed):
     """Process trip updates into station arrival times"""
     station_data = {}
     
+    logging.info(f"Processing {len(feed.entity)} trip update entities...")
+    
     for entity in feed.entity:
         if not entity.HasField('trip_update'):
             continue
             
         trip = entity.trip_update.trip
-        route_id = trip.route_id
+        route_id = trip.route_id if trip.HasField('route_id') else 'UNKNOWN'
         
         for stop_update in entity.trip_update.stop_time_update:
-            stop_id = stop_update.stop_id
+            stop_id = stop_update.stop_id if stop_update.HasField('stop_id') else None
+            
+            if not stop_id:
+                continue
             
             # Get arrival or departure time
-            if stop_update.HasField('arrival') and stop_update.arrival.time:
+            if stop_update.HasField('arrival') and stop_update.arrival.HasField('time'):
                 arrival_time = stop_update.arrival.time
-            elif stop_update.HasField('departure') and stop_update.departure.time:
+            elif stop_update.HasField('departure') and stop_update.departure.HasField('time'):
                 arrival_time = stop_update.departure.time
             else:
                 continue
@@ -103,7 +108,9 @@ def process_trip_updates(feed):
             
             # Check if within MAX_MINUTES
             now = datetime.now()
-            if (arrival_dt - now).total_seconds() / 60 > MAX_MINUTES:
+            minutes_away = (arrival_dt - now).total_seconds() / 60
+            
+            if minutes_away > MAX_MINUTES or minutes_away < -5:  # Skip trains that left >5 min ago
                 continue
             
             # Initialize station data
@@ -113,12 +120,13 @@ def process_trip_updates(feed):
                     'S': []   # Southbound
                 }
             
-            # Determine direction (simplified - may need adjustment based on WMATA data)
-            direction = 'N' if trip.direction_id == 0 else 'S'
+            # Determine direction
+            direction = 'N' if (trip.HasField('direction_id') and trip.direction_id == 0) else 'S'
             
             train_info = {
                 'route': route_id,
-                'time': arrival_dt.isoformat()
+                'time': arrival_dt.isoformat(),
+                'minutes': round(minutes_away, 1)
             }
             
             station_data[stop_id][direction].append(train_info)
@@ -128,6 +136,8 @@ def process_trip_updates(feed):
         for direction in ['N', 'S']:
             station_data[stop_id][direction].sort(key=lambda x: x['time'])
             station_data[stop_id][direction] = station_data[stop_id][direction][:MAX_TRAINS]
+    
+    logging.info(f"Processed arrivals for {len(station_data)} stops")
     
     return station_data
 
@@ -261,9 +271,15 @@ def index():
         </div>
         
         <div class="endpoint">
-            <h3>GET /routes</h3>
-            <p>Get list of all routes</p>
-            <code>curl http://localhost:5000/routes</code>
+            <h3>GET /stations</h3>
+            <p>Get list of all stations and their current train counts</p>
+            <code>curl http://localhost:5000/stations</code>
+        </div>
+        
+        <div class="endpoint">
+            <h3>GET /debug</h3>
+            <p>Debug info about cached data</p>
+            <code>curl http://localhost:5000/debug</code>
         </div>
         
         <div class="endpoint">
@@ -290,11 +306,23 @@ def index():
 @app.route('/by-id/<stop_id>')
 def by_id(stop_id):
     """Get train arrivals for a specific station"""
-    if stop_id not in _data_cache['stations']:
-        return jsonify({'error': 'Station not found'}), 404
     
+    # Check if this stop_id exists in our stations file
     station_info = _stations.get(stop_id, {})
-    arrivals = _data_cache['stations'][stop_id]
+    
+    # Check if we have real-time data for this stop
+    arrivals = _data_cache['stations'].get(stop_id, {'N': [], 'S': []})
+    
+    # If no station info and no arrivals, it's truly not found
+    if not station_info and not arrivals.get('N') and not arrivals.get('S'):
+        # Log available stations for debugging
+        logging.warning(f"Station {stop_id} not found. Available stations: {len(_stations)}, "
+                       f"Stations with arrivals: {len(_data_cache['stations'])}")
+        if len(_data_cache['stations']) > 0:
+            sample_ids = list(_data_cache['stations'].keys())[:5]
+            logging.warning(f"Sample stop IDs with arrivals: {sample_ids}")
+        return jsonify({'error': 'Station not found', 
+                       'hint': 'Check /routes endpoint or logs for available station IDs'}), 404
     
     response = {
         'id': stop_id,
@@ -388,6 +416,49 @@ def routes():
     return jsonify({
         'routes': sorted(list(route_set)),
         'updated': _data_cache['last_update']
+    })
+
+
+@app.route('/stations')
+def stations_list():
+    """Get list of all stations with current data"""
+    stations_with_data = []
+    
+    # From real-time data
+    for stop_id in _data_cache['stations']:
+        station_info = _stations.get(stop_id, {})
+        arrivals = _data_cache['stations'][stop_id]
+        train_count = len(arrivals.get('N', [])) + len(arrivals.get('S', []))
+        
+        stations_with_data.append({
+            'id': stop_id,
+            'name': station_info.get('name', stop_id),
+            'trains': train_count
+        })
+    
+    # Also show stations from config even if no current trains
+    all_station_ids = set(list(_data_cache['stations'].keys()) + list(_stations.keys()))
+    
+    return jsonify({
+        'stations_with_trains': stations_with_data,
+        'total_stations_configured': len(_stations),
+        'total_stations_with_trains': len(_data_cache['stations']),
+        'all_station_ids': sorted(list(all_station_ids))[:20],  # First 20 for reference
+        'updated': _data_cache['last_update']
+    })
+
+
+@app.route('/debug')
+def debug():
+    """Debug endpoint to see what data is available"""
+    return jsonify({
+        'last_update': _data_cache['last_update'],
+        'stations_configured': len(_stations),
+        'stations_with_arrivals': len(_data_cache['stations']),
+        'sample_configured_station_ids': list(_stations.keys())[:10],
+        'sample_arrival_station_ids': list(_data_cache['stations'].keys())[:10],
+        'total_vehicles': len(_data_cache['vehicles']),
+        'websocket_clients': len(_ws_clients)
     })
 
 
