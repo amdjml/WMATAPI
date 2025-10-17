@@ -11,7 +11,7 @@ import io
 import sys
 from collections import defaultdict
 
-WMATA_GTFS_URL = "https://www.wmata.com/schedules/google_transit.zip"
+WMATA_GTFS_URL = "https://api.wmata.com/gtfs/rail-gtfs-static.zip"
 
 
 def download_and_extract_gtfs():
