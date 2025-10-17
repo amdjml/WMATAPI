@@ -1,0 +1,19 @@
+# WMATA API Configuration
+
+# Your WMATA API key (get it from https://developer.wmata.com/)
+WMATA_API_KEY = 'your_api_key_here'
+
+# Path to stations JSON file
+STATIONS_FILE = 'stations.json'
+
+# Cache settings
+CACHE_SECONDS = 60  # How often to fetch new data from WMATA
+
+# Train display limits
+MAX_TRAINS = 10     # Maximum trains to show per station
+MAX_MINUTES = 30    # Only show trains arriving within this many minutes
+
+# Server settings
+THREADED = True     # Enable background data updates
+DEBUG = False       # Enable debug mode
+CROSS_ORIGIN = '*'  # CORS header (use '*' for development, specific domain for production)
