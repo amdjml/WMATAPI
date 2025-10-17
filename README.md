@@ -162,10 +162,10 @@ gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
 
 ### Environment Variables
 
-Set `MTAPI_SETTINGS` to use a different config file:
+Set `WMATAPI_SETTINGS` to use a different config file:
 
 ```bash
-export MTAPI_SETTINGS=/path/to/production.cfg
+export WMATAPI_SETTINGS=/path/to/production.cfg
 python app.py
 ```
 
