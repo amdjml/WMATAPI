@@ -13,8 +13,8 @@ import os
 from collections import defaultdict
 
 # WMATA API URLs - require API key
-WMATA_RAIL_GTFS_URL = "https://api.wmata.com/gtfs/rail-gtfsstatic.zip"
-WMATA_BUS_GTFS_URL = "https://api.wmata.com/gtfs/bus-gtfsstatic.zip"
+WMATA_RAIL_GTFS_URL = "https://api.wmata.com/gtfs/rail-gtfs-static.zip"
+WMATA_BUS_GTFS_URL = "https://api.wmata.com/gtfs/bus-gtfs-static.zip"
 
 
 def get_api_key():
