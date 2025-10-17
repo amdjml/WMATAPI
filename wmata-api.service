@@ -1,0 +1,16 @@
+[Unit]
+Description=WMATA API Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/wmata-api
+Environment="PATH=/opt/wmata-api/.venv/bin"
+Environment="WMATA_API_KEY=your_api_key_here"
+ExecStart=/opt/wmata-api/.venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
