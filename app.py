@@ -53,6 +53,43 @@ except FileNotFoundError:
     _stations = {}
     logging.warning(f"Stations file {STATIONS_FILE} not found. Using empty stations.")
 
+# Build platform to station mapping
+# PF_A01_1 -> STN_A01_C01, PF_A01_2 -> STN_A01_C01, etc.
+_platform_to_station = {}
+
+def build_platform_mapping():
+    """Build mapping from platform IDs (PF_*) to parent station IDs (STN_*)"""
+    global _platform_to_station
+    
+    # Extract station codes from STN IDs
+    # STN_A01_C01 -> A01
+    # STN_A02 -> A02
+    station_codes = {}
+    for stn_id in _stations:
+        if stn_id.startswith('STN_'):
+            # Extract the core code (A01, B02, etc.)
+            parts = stn_id.replace('STN_', '').split('_')
+            code = parts[0]  # A01, A02, etc.
+            station_codes[code] = stn_id
+    
+    logging.info(f"Found {len(station_codes)} station codes: {list(station_codes.keys())[:10]}...")
+    
+    # Now create reverse mapping for all possible platform formats
+    for code, stn_id in station_codes.items():
+        # Map various platform formats to this station
+        _platform_to_station[f'PF_{code}_1'] = stn_id
+        _platform_to_station[f'PF_{code}_2'] = stn_id
+        _platform_to_station[f'PF_{code}_C'] = stn_id
+        _platform_to_station[f'PF_{code}'] = stn_id
+        # Also map the code directly
+        _platform_to_station[code] = stn_id
+        # And the STN_ version maps to itself
+        _platform_to_station[stn_id] = stn_id
+    
+    logging.info(f"Built platform mapping with {len(_platform_to_station)} entries")
+
+build_platform_mapping()
+
 
 def haversine(lon1, lat1, lon2, lat2):
     """Calculate distance between two points in km"""
@@ -90,10 +127,13 @@ def process_trip_updates(feed):
         route_id = trip.route_id if trip.HasField('route_id') else 'UNKNOWN'
         
         for stop_update in entity.trip_update.stop_time_update:
-            stop_id = stop_update.stop_id if stop_update.HasField('stop_id') else None
+            platform_id = stop_update.stop_id if stop_update.HasField('stop_id') else None
             
-            if not stop_id:
+            if not platform_id:
                 continue
+            
+            # Map platform ID to parent station ID
+            station_id = _platform_to_station.get(platform_id, platform_id)
             
             # Get arrival or departure time
             if stop_update.HasField('arrival') and stop_update.arrival.HasField('time'):
@@ -114,8 +154,8 @@ def process_trip_updates(feed):
                 continue
             
             # Initialize station data
-            if stop_id not in station_data:
-                station_data[stop_id] = {
+            if station_id not in station_data:
+                station_data[station_id] = {
                     'N': [],  # Northbound
                     'S': []   # Southbound
                 }
@@ -129,15 +169,15 @@ def process_trip_updates(feed):
                 'minutes': round(minutes_away, 1)
             }
             
-            station_data[stop_id][direction].append(train_info)
+            station_data[station_id][direction].append(train_info)
     
     # Sort and limit trains per station
-    for stop_id in station_data:
+    for station_id in station_data:
         for direction in ['N', 'S']:
-            station_data[stop_id][direction].sort(key=lambda x: x['time'])
-            station_data[stop_id][direction] = station_data[stop_id][direction][:MAX_TRAINS]
+            station_data[station_id][direction].sort(key=lambda x: x['time'])
+            station_data[station_id][direction] = station_data[station_id][direction][:MAX_TRAINS]
     
-    logging.info(f"Processed arrivals for {len(station_data)} stops")
+    logging.info(f"Processed arrivals for {len(station_data)} stations (mapped from platforms)")
     
     return station_data
 
@@ -307,26 +347,34 @@ def index():
 def by_id(stop_id):
     """Get train arrivals for a specific station"""
     
-    # Check if this stop_id exists in our stations file
-    station_info = _stations.get(stop_id, {})
+    # Try to map the incoming ID to a station ID
+    station_id = _platform_to_station.get(stop_id, stop_id)
     
-    # Check if we have real-time data for this stop
-    arrivals = _data_cache['stations'].get(stop_id, {'N': [], 'S': []})
+    # Get station info
+    station_info = _stations.get(station_id, {})
+    
+    # Check if we have real-time data for this station
+    arrivals = _data_cache['stations'].get(station_id, {'N': [], 'S': []})
     
     # If no station info and no arrivals, it's truly not found
     if not station_info and not arrivals.get('N') and not arrivals.get('S'):
         # Log available stations for debugging
-        logging.warning(f"Station {stop_id} not found. Available stations: {len(_stations)}, "
+        logging.warning(f"Station {stop_id} (mapped to {station_id}) not found. "
+                       f"Available stations: {len(_stations)}, "
                        f"Stations with arrivals: {len(_data_cache['stations'])}")
         if len(_data_cache['stations']) > 0:
             sample_ids = list(_data_cache['stations'].keys())[:5]
-            logging.warning(f"Sample stop IDs with arrivals: {sample_ids}")
-        return jsonify({'error': 'Station not found', 
-                       'hint': 'Check /routes endpoint or logs for available station IDs'}), 404
+            logging.warning(f"Sample station IDs with arrivals: {sample_ids}")
+        return jsonify({
+            'error': 'Station not found', 
+            'hint': 'Try /stations endpoint to see available IDs',
+            'tried': stop_id,
+            'mapped_to': station_id
+        }), 404
     
     response = {
-        'id': stop_id,
-        'name': station_info.get('name', stop_id),
+        'id': station_id,
+        'name': station_info.get('name', station_id),
         'N': arrivals.get('N', []),
         'S': arrivals.get('S', []),
         'updated': _data_cache['last_update']
