@@ -1,0 +1,62 @@
+{
+  "A01": {
+    "name": "Metro Center",
+    "lat": 38.898303,
+    "lon": -77.028099,
+    "routes": ["RD", "OR", "SV", "BL"]
+  },
+  "A02": {
+    "name": "Farragut North",
+    "lat": 38.903361,
+    "lon": -77.039208,
+    "routes": ["RD"]
+  },
+  "A03": {
+    "name": "Dupont Circle",
+    "lat": 38.909499,
+    "lon": -77.04362,
+    "routes": ["RD"]
+  },
+  "A04": {
+    "name": "Woodley Park-Zoo/Adams Morgan",
+    "lat": 38.925018,
+    "lon": -77.052648,
+    "routes": ["RD"]
+  },
+  "A05": {
+    "name": "Cleveland Park",
+    "lat": 38.934728,
+    "lon": -77.058226,
+    "routes": ["RD"]
+  },
+  "C01": {
+    "name": "Metro Center",
+    "lat": 38.898303,
+    "lon": -77.028099,
+    "routes": ["RD", "OR", "SV", "BL"]
+  },
+  "C02": {
+    "name": "McPherson Square",
+    "lat": 38.901316,
+    "lon": -77.033652,
+    "routes": ["OR", "SV", "BL"]
+  },
+  "D01": {
+    "name": "Federal Triangle",
+    "lat": 38.893757,
+    "lon": -77.028079,
+    "routes": ["OR", "SV", "BL"]
+  },
+  "D02": {
+    "name": "Smithsonian",
+    "lat": 38.888022,
+    "lon": -77.028104,
+    "routes": ["OR", "SV", "BL"]
+  },
+  "E01": {
+    "name": "Gallery Pl-Chinatown",
+    "lat": 38.89834,
+    "lon": -77.021851,
+    "routes": ["RD", "GR", "YL"]
+  }
+}
