@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  wmata-api:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - WMATA_API_KEY=${WMATA_API_KEY}
+    volumes:
+      - ./stations.json:/app/stations.json
+      - ./settings.cfg:/app/settings.cfg
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/routes"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
