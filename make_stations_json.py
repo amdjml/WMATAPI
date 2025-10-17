@@ -13,8 +13,8 @@ import os
 from collections import defaultdict
 
 # WMATA API URLs - require API key
-WMATA_RAIL_GTFS_URL = "https://api.wmata.com/gtfs/rail-gtfs-static.zip"
-WMATA_BUS_GTFS_URL = "https://api.wmata.com/gtfs/bus-gtfs-static.zip"
+WMATA_RAIL_GTFS_URL = "https://api.wmata.com/gtfs/rail-gtfsstatic.zip"
+WMATA_BUS_GTFS_URL = "https://api.wmata.com/gtfs/bus-gtfsstatic.zip"
 
 
 def get_api_key():
@@ -78,8 +78,10 @@ def download_and_extract_gtfs(api_key):
 
 
 def parse_stops(stops_data):
-    """Parse stops.txt into station dictionary"""
+    """Parse stops.txt into station dictionary and build parent mapping"""
     stations = {}
+    parent_mapping = {}  # Maps child stop_id -> parent station_id
+    
     reader = csv.DictReader(io.StringIO(stops_data))
     
     for row in reader:
@@ -87,24 +89,25 @@ def parse_stops(stops_data):
         stop_name = row['stop_name'].strip()
         stop_lat = float(row['stop_lat'])
         stop_lon = float(row['stop_lon'])
-        
-        # WMATA uses location_type to distinguish stations from platforms
-        # location_type 1 = station, 0 = stop/platform
         location_type = row.get('location_type', '0')
+        parent_station = row.get('parent_station', '').strip()
         
-        # Skip platform-specific stops if there's a parent station
-        if row.get('parent_station') and row['parent_station'].strip():
-            continue
+        # Build parent mapping for platforms
+        if parent_station:
+            parent_mapping[stop_id] = parent_station
         
-        stations[stop_id] = {
-            'name': stop_name,
-            'lat': stop_lat,
-            'lon': stop_lon,
-            'routes': set(),
-            'location_type': location_type
-        }
+        # Only keep parent stations (location_type=1) in our main dict
+        # But we need to track all stops for route mapping
+        if location_type == '1' or not parent_station:
+            stations[stop_id] = {
+                'name': stop_name,
+                'lat': stop_lat,
+                'lon': stop_lon,
+                'routes': set(),
+                'location_type': location_type
+            }
     
-    return stations
+    return stations, parent_mapping
 
 
 def parse_routes(routes_data):
@@ -129,7 +132,7 @@ def parse_routes(routes_data):
     return routes
 
 
-def add_routes_to_stations(stations, routes, trips_data, stop_times_data):
+def add_routes_to_stations(stations, routes, trips_data, stop_times_data, parent_mapping):
     """Add route information to stations based on trips and stop_times"""
     if not trips_data or not stop_times_data:
         print("Warning: Cannot map routes to stations without trips and stop_times data")
@@ -145,6 +148,10 @@ def add_routes_to_stations(stations, routes, trips_data, stop_times_data):
         route_id = row['route_id'].strip()
         trip_routes[trip_id] = route_id
     
+    # Track progress
+    stops_processed = 0
+    routes_added = 0
+    
     # Map stops to routes via stop_times
     reader = csv.DictReader(io.StringIO(stop_times_data))
     for row in reader:
@@ -154,9 +161,23 @@ def add_routes_to_stations(stations, routes, trips_data, stop_times_data):
         if trip_id in trip_routes:
             route_id = trip_routes[trip_id]
             
-            # Find the station (might be parent of this stop)
-            if stop_id in stations:
-                stations[stop_id]['routes'].add(route_id)
+            # Find the parent station for this stop
+            station_id = parent_mapping.get(stop_id, stop_id)
+            
+            # Add route to the station
+            if station_id in stations:
+                if route_id not in stations[station_id]['routes']:
+                    routes_added += 1
+                stations[station_id]['routes'].add(route_id)
+            
+            stops_processed += 1
+            
+            # Progress indicator
+            if stops_processed % 10000 == 0:
+                print(f"  Processed {stops_processed} stop times, added {routes_added} route mappings...")
+    
+    print(f"  Total: Processed {stops_processed} stop times")
+    print(f"  Added {routes_added} route->station mappings")
     
     # Convert sets to lists and sort
     for stop_id in stations:
@@ -255,8 +276,9 @@ def main():
         stops_data, routes_data, stop_times_data, trips_data = download_and_extract_gtfs(api_key)
         
         print("\nParsing stops...")
-        stations = parse_stops(stops_data)
-        print(f"Found {len(stations)} stops/stations")
+        stations, parent_mapping = parse_stops(stops_data)
+        print(f"Found {len(stations)} parent stations")
+        print(f"Found {len(parent_mapping)} platform->station mappings")
         
         print("Parsing routes...")
         routes = parse_routes(routes_data)
@@ -264,7 +286,7 @@ def main():
         
         if trips_data and stop_times_data:
             print("Mapping routes to stations (this may take a moment)...")
-            stations = add_routes_to_stations(stations, routes, trips_data, stop_times_data)
+            stations = add_routes_to_stations(stations, routes, trips_data, stop_times_data, parent_mapping)
         
         print("Simplifying route names...")
         stations = simplify_route_names(stations, routes)
