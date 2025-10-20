@@ -57,7 +57,62 @@ except FileNotFoundError:
 # PF_A01_1 -> STN_A01_C01, PF_A01_2 -> STN_A01_C01, etc.
 _platform_to_station = {}
 
-def build_platform_mapping():
+def build_platform_mapping()
+
+# Background updater thread reference
+_updater_thread = None
+_app_initialized = False
+
+
+def start_background_updater():
+    """Start the background updater thread"""
+    global _updater_thread, _app_initialized
+    
+    if _app_initialized:
+        return
+    
+    logging.info("Initializing WMATA API...")
+    
+    if not WMATA_API_KEY:
+        logging.error("WMATA_API_KEY not set!")
+        logging.error("Set via environment: export WMATA_API_KEY=your_key")
+        return
+    
+    logging.info(f"API Key: {WMATA_API_KEY[:10]}...")
+    logging.info(f"Stations: {len(_stations)}")
+    logging.info(f"Platform mappings: {len(_platform_to_station)}")
+    
+    # Initial data load
+    logging.info("Fetching initial data...")
+    update_data()
+    
+    # Start background updater if threaded mode
+    if THREADED and _updater_thread is None:
+        _updater_thread = threading.Thread(target=background_updater, daemon=True)
+        _updater_thread.start()
+        logging.info(f"Background updater started (refresh every {CACHE_SECONDS}s)")
+    
+    _app_initialized = True
+    logging.info("WMATA API ready!")
+
+
+# For gunicorn: use server_started signal or on_starting hook
+# This ensures initialization happens in the worker process
+import atexit
+
+def initialize_on_import():
+    """Initialize when module is imported by gunicorn worker"""
+    if not _app_initialized:
+        # Set up logging first
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        # Start updater
+        start_background_updater()
+
+# Call initialization
+initialize_on_import():
     """Build mapping from platform IDs (PF_*) to parent station IDs (STN_*)"""
     global _platform_to_station
     
@@ -525,17 +580,20 @@ def debug():
 @sock.route('/ws')
 def websocket(ws):
     """WebSocket endpoint for real-time updates"""
+    client_id = id(ws)
+    
     with _ws_lock:
         _ws_clients.append(ws)
     
-    logging.info(f"WebSocket client connected. Total clients: {len(_ws_clients)}")
+    logging.info(f"WebSocket client {client_id} connected. Total clients: {len(_ws_clients)}")
     
     # Send initial data
     try:
         data = get_all_stations_data()
         ws.send(json.dumps(data))
-    except:
-        pass
+        logging.info(f"Sent initial data to client {client_id}")
+    except Exception as e:
+        logging.error(f"Error sending initial data to client {client_id}: {e}")
     
     # Keep connection alive
     try:
@@ -543,13 +601,22 @@ def websocket(ws):
             message = ws.receive()
             if message is None:
                 break
-    except:
-        pass
+            # Echo back or handle client messages if needed
+            logging.debug(f"Received message from client {client_id}: {message}")
+    except Exception as e:
+        logging.info(f"WebSocket client {client_id} connection ended: {e}")
     finally:
         with _ws_lock:
             if ws in _ws_clients:
                 _ws_clients.remove(ws)
-        logging.info(f"WebSocket client disconnected. Total clients: {len(_ws_clients)}")
+        logging.info(f"WebSocket client {client_id} disconnected. Total clients: {len(_ws_clients)}")
+
+
+@app.before_request
+def ensure_initialized():
+    """Ensure app is initialized before handling requests"""
+    if not _app_initialized:
+        start_background_updater()
 
 
 @app.after_request
@@ -563,22 +630,7 @@ def after_request(response):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    
-    if not WMATA_API_KEY:
-        logging.error("WMATA_API_KEY not set!")
-        exit(1)
-    
-    # Initial data load
-    update_data()
-    
-    # Start background updater if threaded mode
-    if THREADED:
-        updater_thread = threading.Thread(target=background_updater, daemon=True)
-        updater_thread.start()
-        logging.info("Background updater started")
-    
+    # When running directly with python app.py
+    if not _app_initialized:
+        start_background_updater()
     app.run(debug=DEBUG, host='0.0.0.0', port=5000)
