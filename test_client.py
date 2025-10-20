@@ -80,39 +80,59 @@ def test_websocket():
     
     def on_message(ws, message):
         update_count[0] += 1
-        data = json.loads(message)
+        
+        try:
+            data = json.loads(message)
+        except json.JSONDecodeError:
+            print(f"  ✗ Invalid JSON received")
+            return
         
         print(f"\n--- Update #{update_count[0]} ---")
         print(f"Time: {time.strftime('%H:%M:%S')}")
-        print(f"Stations with trains: {len(data['data'])}")
-        print(f"Last update: {data.get('updated', 'Unknown')}")
         
-        # Show first 3 stations with trains
-        stations_with_arrivals = [s for s in data['data'] if s.get('N') or s.get('S')]
-        if stations_with_arrivals:
-            print(f"\nSample stations:")
-            for station in stations_with_arrivals[:3]:
-                total_trains = len(station.get('N', [])) + len(station.get('S', []))
-                print(f"  - {station['name']}: {total_trains} trains")
+        if 'data' in data:
+            print(f"Stations with trains: {len(data['data'])}")
+            print(f"Last update: {data.get('updated', 'Unknown')}")
+            
+            # Show first 3 stations with trains
+            stations_with_arrivals = [s for s in data['data'] if s.get('N') or s.get('S')]
+            if stations_with_arrivals:
+                print(f"\nSample stations:")
+                for station in stations_with_arrivals[:3]:
+                    total_trains = len(station.get('N', [])) + len(station.get('S', []))
+                    print(f"  - {station['name']}: {total_trains} trains")
+            else:
+                print("  No stations with trains currently")
+        else:
+            print(f"Unexpected message format: {list(data.keys())}")
     
     def on_error(ws, error):
-        print(f"WebSocket error: {error}")
+        print(f"\n✗ WebSocket error: {error}")
     
     def on_close(ws, close_status_code, close_msg):
-        print("\nWebSocket connection closed")
+        print(f"\n✓ WebSocket connection closed")
+        if close_status_code:
+            print(f"  Status: {close_status_code}")
+        if close_msg:
+            print(f"  Message: {close_msg}")
     
     def on_open(ws):
-        print("WebSocket connected!")
+        print("✓ WebSocket connected! Waiting for updates...\n")
     
-    ws = websocket.WebSocketApp(
-        WS_URL,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-        on_open=on_open
-    )
-    
-    ws.run_forever()
+    try:
+        ws = websocket.WebSocketApp(
+            WS_URL,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close,
+            on_open=on_open
+        )
+        
+        ws.run_forever()
+    except ConnectionRefusedError:
+        print("\n✗ Connection refused. Is the server running?")
+    except Exception as e:
+        print(f"\n✗ Error: {e}")
 
 
 def test_concurrent_requests():
