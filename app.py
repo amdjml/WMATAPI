@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from google.transit import gtfs_realtime_pb2
 from math import radians, cos, sin, asin, sqrt
 import logging
+import os
 
 app = Flask(__name__)
 sock = Sock(app)
@@ -20,7 +21,7 @@ sock = Sock(app)
 # Configuration
 app.config.from_pyfile('settings.cfg', silent=True)
 
-WMATA_API_KEY = app.config.get('WMATA_API_KEY', '')
+WMATA_API_KEY = app.config.get('WMATA_API_KEY') or os.environ.get('WMATA_API_KEY', '')
 STATIONS_FILE = app.config.get('STATIONS_FILE', 'stations.json')
 CACHE_SECONDS = app.config.get('CACHE_SECONDS', 60)
 MAX_TRAINS = app.config.get('MAX_TRAINS', 10)
@@ -55,96 +56,38 @@ except FileNotFoundError:
     logging.warning(f"Stations file {STATIONS_FILE} not found. Using empty stations.")
 
 # Build platform to station mapping
-# PF_A01_1 -> STN_A01_C01, PF_A01_2 -> STN_A01_C01, etc.
 _platform_to_station = {}
 
-def build_platform_mapping()
-
-# Background updater thread reference
-_updater_thread = None
-_app_initialized = False
-
-
-def start_background_updater():
-    """Start the background updater thread"""
-    global _updater_thread, _app_initialized
-    
-    if _app_initialized:
-        return
-    
-    logging.info("Initializing WMATA API...")
-    
-    if not WMATA_API_KEY:
-        logging.error("WMATA_API_KEY not set!")
-        logging.error("Set via environment: export WMATA_API_KEY=your_key")
-        return
-    
-    logging.info(f"API Key: {WMATA_API_KEY[:10]}...")
-    logging.info(f"Stations: {len(_stations)}")
-    logging.info(f"Platform mappings: {len(_platform_to_station)}")
-    
-    # Initial data load
-    logging.info("Fetching initial data...")
-    update_data()
-    
-    # Start background updater if threaded mode
-    if THREADED and _updater_thread is None:
-        _updater_thread = threading.Thread(target=background_updater, daemon=True)
-        _updater_thread.start()
-        logging.info(f"Background updater started (refresh every {CACHE_SECONDS}s)")
-    
-    _app_initialized = True
-    logging.info("WMATA API ready!")
-
-
-# For gunicorn: use server_started signal or on_starting hook
-# This ensures initialization happens in the worker process
-import atexit
-
-def initialize_on_import():
-    """Initialize when module is imported by gunicorn worker"""
-    if not _app_initialized:
-        # Set up logging first
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
-        # Start updater
-        start_background_updater()
-
-# Call initialization
-initialize_on_import():
+def build_platform_mapping():
     """Build mapping from platform IDs (PF_*) to parent station IDs (STN_*)"""
     global _platform_to_station
     
     # Extract station codes from STN IDs
-    # STN_A01_C01 -> A01
-    # STN_A02 -> A02
     station_codes = {}
     for stn_id in _stations:
         if stn_id.startswith('STN_'):
-            # Extract the core code (A01, B02, etc.)
             parts = stn_id.replace('STN_', '').split('_')
-            code = parts[0]  # A01, A02, etc.
+            code = parts[0]
             station_codes[code] = stn_id
     
     logging.info(f"Found {len(station_codes)} station codes: {list(station_codes.keys())[:10]}...")
     
-    # Now create reverse mapping for all possible platform formats
+    # Create reverse mapping for all possible platform formats
     for code, stn_id in station_codes.items():
-        # Map various platform formats to this station
         _platform_to_station[f'PF_{code}_1'] = stn_id
         _platform_to_station[f'PF_{code}_2'] = stn_id
         _platform_to_station[f'PF_{code}_C'] = stn_id
         _platform_to_station[f'PF_{code}'] = stn_id
-        # Also map the code directly
         _platform_to_station[code] = stn_id
-        # And the STN_ version maps to itself
         _platform_to_station[stn_id] = stn_id
     
     logging.info(f"Built platform mapping with {len(_platform_to_station)} entries")
 
 build_platform_mapping()
+
+# Background updater thread reference
+_updater_thread = None
+_app_initialized = False
 
 
 def haversine(lon1, lat1, lon2, lat2):
@@ -206,15 +149,12 @@ def process_trip_updates(feed):
             now = datetime.now()
             minutes_away = (arrival_dt - now).total_seconds() / 60
             
-            if minutes_away > MAX_MINUTES or minutes_away < -5:  # Skip trains that left >5 min ago
+            if minutes_away > MAX_MINUTES or minutes_away < -5:
                 continue
             
             # Initialize station data
             if station_id not in station_data:
-                station_data[station_id] = {
-                    'N': [],  # Northbound
-                    'S': []   # Southbound
-                }
+                station_data[station_id] = {'N': [], 'S': []}
             
             # Determine direction
             direction = 'N' if (trip.HasField('direction_id') and trip.direction_id == 0) else 'S'
@@ -301,7 +241,6 @@ def broadcast_to_websockets():
             except:
                 dead_clients.append(client)
         
-        # Remove dead connections
         for client in dead_clients:
             _ws_clients.remove(client)
 
@@ -309,8 +248,8 @@ def broadcast_to_websockets():
 def background_updater():
     """Background thread to update data periodically"""
     while True:
-        update_data()
         time.sleep(CACHE_SECONDS)
+        update_data()
 
 
 def get_all_stations_data():
@@ -327,7 +266,6 @@ def get_all_stations_data():
             'S': arrivals.get('S', [])
         }
         
-        # Add location if available
         if 'lat' in station_info and 'lon' in station_info:
             station_data['location'] = [station_info['lat'], station_info['lon']]
         
@@ -337,6 +275,51 @@ def get_all_stations_data():
         'data': stations_with_trains,
         'updated': _data_cache['last_update']
     }
+
+
+def start_background_updater():
+    """Start the background updater thread"""
+    global _updater_thread, _app_initialized
+    
+    if _app_initialized:
+        return
+    
+    logging.info("Initializing WMATA API...")
+    
+    if not WMATA_API_KEY:
+        logging.error("WMATA_API_KEY not set!")
+        logging.error("Set via environment: export WMATA_API_KEY=your_key")
+        return
+    
+    logging.info(f"API Key: {WMATA_API_KEY[:10]}...")
+    logging.info(f"Stations: {len(_stations)}")
+    logging.info(f"Platform mappings: {len(_platform_to_station)}")
+    
+    # Initial data load
+    logging.info("Fetching initial data...")
+    update_data()
+    
+    # Start background updater if threaded mode
+    if THREADED and _updater_thread is None:
+        _updater_thread = threading.Thread(target=background_updater, daemon=True)
+        _updater_thread.start()
+        logging.info(f"Background updater started (refresh every {CACHE_SECONDS}s)")
+    
+    _app_initialized = True
+    logging.info("WMATA API ready!")
+
+
+def initialize_on_import():
+    """Initialize when module is imported by gunicorn worker"""
+    if not _app_initialized:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        start_background_updater()
+
+# Call initialization
+initialize_on_import()
 
 
 @app.route('/')
@@ -376,6 +359,12 @@ def index():
             <h3>GET /by-route/:route</h3>
             <p>Get all stations served by a specific route</p>
             <code>curl http://localhost:5000/by-route/RD</code>
+        </div>
+        
+        <div class="endpoint">
+            <h3>GET /routes</h3>
+            <p>Get list of all routes</p>
+            <code>curl http://localhost:5000/routes</code>
         </div>
         
         <div class="endpoint">
@@ -426,7 +415,6 @@ def by_id(stop_id):
     
     # If no station info and no arrivals, it's truly not found
     if not station_info and not arrivals.get('N') and not arrivals.get('S'):
-        # Log available stations for debugging
         logging.warning(f"Station {stop_id} (mapped to {station_id}) not found. "
                        f"Available stations: {len(_stations)}, "
                        f"Stations with arrivals: {len(_data_cache['stations'])}")
@@ -460,7 +448,7 @@ def by_location():
     try:
         lat = float(request.args.get('lat'))
         lon = float(request.args.get('lon'))
-        radius = float(request.args.get('radius', 0.5))  # km
+        radius = float(request.args.get('radius', 0.5))
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid lat/lon parameters'}), 400
     
@@ -540,7 +528,6 @@ def stations_list():
     """Get list of all stations with current data"""
     stations_with_data = []
     
-    # From real-time data
     for stop_id in _data_cache['stations']:
         station_info = _stations.get(stop_id, {})
         arrivals = _data_cache['stations'][stop_id]
@@ -552,14 +539,13 @@ def stations_list():
             'trains': train_count
         })
     
-    # Also show stations from config even if no current trains
     all_station_ids = set(list(_data_cache['stations'].keys()) + list(_stations.keys()))
     
     return jsonify({
         'stations_with_trains': stations_with_data,
         'total_stations_configured': len(_stations),
         'total_stations_with_trains': len(_data_cache['stations']),
-        'all_station_ids': sorted(list(all_station_ids))[:20],  # First 20 for reference
+        'all_station_ids': sorted(list(all_station_ids))[:20],
         'updated': _data_cache['last_update']
     })
 
@@ -602,7 +588,6 @@ def websocket(ws):
             message = ws.receive()
             if message is None:
                 break
-            # Echo back or handle client messages if needed
             logging.debug(f"Received message from client {client_id}: {message}")
     except Exception as e:
         logging.info(f"WebSocket client {client_id} connection ended: {e}")
@@ -631,7 +616,6 @@ def after_request(response):
 
 
 if __name__ == '__main__':
-    # When running directly with python app.py
     if not _app_initialized:
         start_background_updater()
     app.run(debug=DEBUG, host='0.0.0.0', port=5000)
