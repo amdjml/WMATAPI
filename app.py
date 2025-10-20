@@ -188,36 +188,48 @@ def update_data():
         logging.info("Fetching data from WMATA API...")
         
         # Fetch trip updates (arrivals)
-        trip_feed = fetch_gtfs_data(TRIP_UPDATES_URL)
-        station_data = process_trip_updates(trip_feed)
+        try:
+            trip_feed = fetch_gtfs_data(TRIP_UPDATES_URL)
+            station_data = process_trip_updates(trip_feed)
+        except Exception as e:
+            logging.error(f"Error fetching trip updates: {e}")
+            station_data = {}
         
         # Fetch vehicle positions
-        vehicle_feed = fetch_gtfs_data(VEHICLE_POSITIONS_URL)
         vehicles = []
-        for entity in vehicle_feed.entity:
-            if entity.HasField('vehicle'):
-                v = entity.vehicle
-                vehicles.append({
-                    'id': entity.id,
-                    'route': v.trip.route_id if v.HasField('trip') else None,
-                    'lat': v.position.latitude if v.HasField('position') else None,
-                    'lon': v.position.longitude if v.HasField('position') else None,
-                    'stop_id': v.stop_id if v.HasField('stop_id') else None,
-                    'status': v.current_status if v.HasField('current_status') else None
-                })
+        try:
+            vehicle_feed = fetch_gtfs_data(VEHICLE_POSITIONS_URL)
+            for entity in vehicle_feed.entity:
+                if entity.HasField('vehicle'):
+                    v = entity.vehicle
+                    vehicles.append({
+                        'id': entity.id,
+                        'route': v.trip.route_id if v.HasField('trip') and v.trip.HasField('route_id') else None,
+                        'lat': v.position.latitude if v.HasField('position') else None,
+                        'lon': v.position.longitude if v.HasField('position') else None,
+                        'stop_id': v.stop_id if v.HasField('stop_id') else None,
+                        'status': v.current_status if v.HasField('current_status') else None
+                    })
+        except Exception as e:
+            logging.error(f"Error fetching vehicle positions: {e}")
         
         # Update cache
         _data_cache['stations'] = station_data
         _data_cache['vehicles'] = vehicles
         _data_cache['last_update'] = datetime.now().isoformat()
         
-        logging.info(f"Data updated. {len(station_data)} stations with arrivals.")
+        logging.info(f"Data updated. {len(station_data)} stations, {len(vehicles)} vehicles")
         
         # Broadcast to WebSocket clients
-        broadcast_to_websockets()
+        try:
+            broadcast_to_websockets()
+        except Exception as e:
+            logging.error(f"Error broadcasting to websockets: {e}")
         
     except Exception as e:
-        logging.error(f"Error updating data: {e}")
+        logging.error(f"Critical error updating data: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def broadcast_to_websockets():
