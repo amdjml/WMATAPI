@@ -1,5 +1,6 @@
 """
 WMATA API - Real-time train data API for Washington Metro
+Similar to MTAPI for NYC, but for WMATA
 """
 
 from flask import Flask, request, jsonify, render_template_string
