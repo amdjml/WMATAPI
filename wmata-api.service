@@ -3,14 +3,20 @@ Description=WMATA API Service
 After=network.target
 
 [Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/wmata-api
-Environment="PATH=/opt/wmata-api/.venv/bin"
+Type=notify
+User=root
+WorkingDirectory=/opt/WMATAPI
+Environment="PATH=/opt/WMATAPI/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="WMATA_API_KEY=your_api_key_here"
-ExecStart=/opt/wmata-api/.venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
+ExecStart=/opt/WMATAPI/.venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 --timeout 120 app:app
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings (optional but recommended)
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
